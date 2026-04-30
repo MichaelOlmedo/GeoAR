@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GeoAR</title>
+    
+    <link rel="icon" type="image/png" href="GeoAR.png">
+    <link rel="apple-touch-icon" href="GeoAR.png"> 
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.1.1/model-viewer.min.js"></script>
+    <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
+    
+    <style>
+        /* --- ESTILOS BASE --- */
+        body { margin: 0; background: black; overflow: hidden; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        
+        #videoBackground {
+            position: fixed; top: 0; left: 0; 
+            width: 100vw; height: 100dvh; 
+            object-fit: cover; z-index: 1;
+        }
+        
+        #ar-container {
+            position: absolute; top: 0; left: 0; 
+            width: 100vw; height: 100dvh;
+            z-index: 10; pointer-events: auto;
+            display: flex; justify-content: center; align-items: center;
+        }
+        model-viewer { width: 100%; height: 100%; display: none; --poster-color: transparent; }
+
+        /* --- BARRA LATERAL --- */
+        #sidebar-right {
+            position: absolute; right: 15px; top: 50%; transform: translateY(-50%);
+            display: none; flex-direction: column; gap: 20px; z-index: 30; 
+        }
+
+        .btn-circular {
+            width: clamp(50px, 12vmin, 65px); height: clamp(50px, 12vmin, 65px);
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 50%; border: 3px solid #3498db; 
+            cursor: pointer; display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.1s;
+            position: relative;
+        }
+        .btn-circular:active { transform: scale(0.9); }
+        .btn-circular img { width: 55%; height: 55%; object-fit: contain; }
+
+        /* Tooltip */
+        .tooltip-texto {
+            visibility: hidden; width: max-content; padding: 6px 12px;
+            background-color: rgba(0, 0, 0, 0.9); color: #fff; text-align: center; 
+            border-radius: 6px; font-size: 13px; font-weight: bold;
+            position: absolute; z-index: 100; top: 50%; right: 125%; transform: translateY(-50%);
+            opacity: 0; transition: opacity 0.3s; pointer-events: none;
+        }
+        .tooltip-texto::after {
+            content: ""; position: absolute; top: 50%; left: 100%; margin-top: -5px;
+            border-width: 5px; border-style: solid; border-color: transparent transparent transparent rgba(0, 0, 0, 0.9);
+        }
+        .btn-circular:hover .tooltip-texto { visibility: visible; opacity: 1; }
+
+        /* --- TEXTO DE ESTADO --- */
+        #estado {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            width: fit-content; max-width: 80%; text-align: center; color: white; 
+            font-size: clamp(14px, 5vmin, 20px); font-weight: bold; 
+            background: rgba(0,0,0,0.6); padding: 10px 25px; border-radius: 30px; 
+            z-index: 20; pointer-events: none; white-space: nowrap; 
+        }
+
+        /* --- MODAL --- */
+        #modal-info {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.95); z-index: 50; display: none;
+            justify-content: center; align-items: center; 
+        }
+        #panzoom-wrapper { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        #modal-content-img { max-width: 95%; max-height: 85%; object-fit: contain; cursor: grab; }
+        #btn-cerrar {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            padding: 10px 30px; background: #e74c3c; color: white; font-weight: bold;
+            border: none; border-radius: 50px; cursor: pointer; z-index: 60;
+            font-size: 16px; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.6);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ar-container">
+        <model-viewer id="visor3d" src="" alt="Modelo 3D" camera-controls auto-rotate shadow-intensity="1" touch-action="pan-y"></model-viewer>
+    </div>
+
+    <div id="sidebar-right">
+        <!-- NUEVO BOTÓN PRIMERO: Cambiar de modelo 3D -->
+        <div class="btn-circular" style="border-color: #2ecc71;" onclick="cambiarModelo()">
+            <img src="icono_camb.png" alt="Cambiar Modelo"><span class="tooltip-texto">Cambiar modelo 3D</span>
+        </div>
+        
+        <!-- Botón de aplicaciones -->
+        <div class="btn-circular" onclick="mostrarInfo('aplicaciones')">
+            <img src="icono_app.png" alt="Apps"><span class="tooltip-texto">Aplicación en la vida cotidiana</span>
+        </div>
+        
+        <!-- Botón de fórmulas -->
+        <div class="btn-circular" style="border-color: #e67e22;" onclick="mostrarInfo('formulas')">
+            <img src="icono_form.png" alt="Fórmulas"><span class="tooltip-texto">Fórmulas a usar</span>
+        </div>
+    </div>
+
+    <div id="modal-info">
+        <div id="panzoom-wrapper"><img id="modal-content-img" src=""></div>
+        <button id="btn-cerrar" onclick="cerrarModal()">CERRAR X</button>
+    </div>
+
+    <div id="estado">⏳ Cargando IA...</div>
+
+    <script>
+        let classifier, video, panzoomInstance;
+        let visor3d = document.getElementById('visor3d');
+        let textoEstado = document.getElementById('estado');
+        let sidebar = document.getElementById('sidebar-right');
+        let modal = document.getElementById('modal-info');
+        let modalImg = document.getElementById('modal-content-img');
+
+        // --- DICCIONARIO DE FIGURAS (ACTUALIZADO A LISTAS DE 3 MODELOS) ---
+        const modelos3D = {
+            "Triangulo": ["triangulo3d.glb", "triangulo3d2.glb", "triangulo3d3.glb"],
+            "Cuadrado":  ["cuadrado3d.glb", "cuadrado3d2.glb", "cuadrado3d3.glb"],
+            "Rectangulo":["rectangulo3d.glb", "rectangulo3d2.glb", "rectangulo3d3.glb"],
+            "Pentagono": ["pentagono3d.glb", "pentagono3d2.glb", "pentagono3d3.glb"],
+            "Hexagono":  ["hexagono3d.glb", "hexagono3d2.glb", "hexagono3d3.glb"],
+            "Heptagono": ["heptagono3d.glb", "heptagono3d2.glb", "heptagono3d3.glb"],
+            "Octagono":  ["octagono3d.glb", "octagono3d2.glb", "octagono3d3.glb"],
+            "Circulo":   ["circulo3d.glb", "circulo3d2.glb", "circulo3d3.glb"]
+        };
+
+        // Memoria de qué figura estamos viendo y qué variante del modelo 3D está activa
+        let figuraActual = ""; 
+        let indiceModelo = 0; // Inicia siempre en el primer modelo (0)
+
+        function preload() {
+            classifier = ml5.imageClassifier('./model.json', () => console.log("IA Lista"));
+        }
+
+        function setup() {
+            noCanvas();
+            let constraints = { video: { facingMode: "environment" } };
+            try { video = createCapture(constraints); } catch(e) { video = createCapture(VIDEO); }
+            video.id('videoBackground'); 
+            
+            panzoomInstance = Panzoom(modalImg, { maxScale: 8, minScale: 0.5, contain: false, animate: true });
+            modalImg.parentElement.addEventListener('wheel', panzoomInstance.zoomWithWheel);
+
+            video.elt.onloadeddata = () => {
+                textoEstado.innerText = "📷 Enfoca una figura...";
+                clasificar();
+            };
+        }
+
+        function clasificar() { if (classifier) classifier.classify(video.elt, gotResult); }
+
+        function gotResult(error, results) {
+            if (error) return;
+            
+            let nombre = results[0].label;
+            let confianza = results[0].confidence;
+
+            if (confianza > 0.85) {
+                if (modelos3D[nombre]) {
+                    if (figuraActual !== nombre) {
+                        figuraActual = nombre;
+                        indiceModelo = 0; // Al detectar una nueva figura, empezamos con el modelo 1
+                        
+                        textoEstado.innerText = "✨ " + nombre.toUpperCase() + " ✨";
+                        
+                        // Cargamos el primer modelo de la lista para esta figura
+                        visor3d.src = modelos3D[nombre][indiceModelo];
+                        
+                        visor3d.style.display = "block";
+                        sidebar.style.display = "flex";
+                    }
+                } else {
+                    ocultarTodo();
+                }
+            } else {
+                ocultarTodo();
+            }
+            clasificar();
+        }
+
+        function ocultarTodo() {
+            if (visor3d.style.display !== "none") {
+                visor3d.style.display = "none";
+                sidebar.style.display = "none";
+                textoEstado.innerText = "Buscando figura...";
+                textoEstado.style.color = "white";
+                figuraActual = ""; 
+                indiceModelo = 0; // Reseteamos el índice
+            }
+        }
+
+        // --- FUNCIÓN NUEVA: CAMBIAR MODELO 3D ---
+        window.cambiarModelo = function() {
+            // Seguridad: Si no hay figura actual, no hacemos nada
+            if (!figuraActual) return;
+            
+            // Sumamos 1 al índice. El "% 3" hace que cuando llegue a 3, vuelva a 0 (0, 1, 2, 0, 1, 2...)
+            indiceModelo = (indiceModelo + 1) % 3;
+            
+            // Actualizamos la ruta del visor 3D al nuevo modelo
+            visor3d.src = modelos3D[figuraActual][indiceModelo];
+        }
+
+        // --- FUNCIÓN INTELIGENTE PARA MOSTRAR IMÁGENES ---
+        window.mostrarInfo = function(tipo) {
+            visor3d.removeAttribute('auto-rotate'); 
+            
+            if (!figuraActual) return;
+
+            let sufijo = (tipo === 'aplicaciones') ? "_app.jpg" : "_form.jpg";
+            let nombreArchivo = figuraActual + sufijo;
+
+            modalImg.src = nombreArchivo;
+            
+            modal.style.display = "flex"; 
+            if (panzoomInstance) setTimeout(() => panzoomInstance.reset({ animate: false }), 10);
+        }
+
+        window.cerrarModal = function() {
+            modal.style.display = "none";
+            visor3d.setAttribute('auto-rotate', ''); 
+        }
+    </script>
+</body>
+</html>
